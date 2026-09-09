@@ -99,6 +99,12 @@ void ResultsViewerDialog::buildUi(const cfd::mesh::Mesh& mesh, const Theme& them
     sideLayout->addWidget(densitySlider_);
     connect(densitySlider_, &QSlider::valueChanged, viewer_, &ResultsViewerWidget::setVectorDensity);
 
+    vortexVolumeCheckbox_ = new QCheckBox("Show vortex cores (Q-criterion)", side);
+    vortexVolumeCheckbox_->setToolTip(
+        "Ray-marched volumetric render of rotation-dominated flow regions -- can be slow on lower-end GPUs.");
+    sideLayout->addWidget(vortexVolumeCheckbox_);
+    connect(vortexVolumeCheckbox_, &QCheckBox::toggled, viewer_, &ResultsViewerWidget::setShowVortexVolume);
+
     sideLayout->addStretch(1);
 
     sideLayout->addWidget(new QLabel("Timestep:", side));

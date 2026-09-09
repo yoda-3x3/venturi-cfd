@@ -5,7 +5,7 @@
 
 #include <QMatrix4x4>
 #include <QOpenGLBuffer>
-#include <QOpenGLFunctions>
+#include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLWidget>
@@ -25,7 +25,14 @@
 // switch, an accepted limitation matching how OrientationDialog already
 // works): reuses its lit mesh shader unchanged and adds a new
 // textured-quad shader for the slice.
-class ResultsViewerWidget : public QOpenGLWidget, protected QOpenGLFunctions {
+//
+// Inherits the full desktop 3.3 core function set (not just Qt's
+// ES2-subset QOpenGLFunctions, used by every other GL widget in this
+// app) because the vortex-volume ray marcher below needs glTexImage3D
+// (3D textures aren't part of ES2) -- a strict superset, so every
+// existing ES2-compatible call (glTexImage2D, glDrawArrays, ...) still
+// works unchanged.
+class ResultsViewerWidget : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core {
     Q_OBJECT
 
 public:
@@ -74,6 +81,15 @@ public:
     // since both are "how many flow glyphs" from the user's point of view.
     void setVectorDensity(int density);
 
+    // Volumetric ray-marched render of vortex cores: computes the
+    // Q-criterion (rotation-rate-squared minus strain-rate-squared) at
+    // every grid point from the velocity field's own gradients, keeps only
+    // the rotation-dominated (Q>0) regions -- the standard scalar for
+    // identifying vortex cores, not just generic velocity magnitude -- and
+    // marches camera rays through the resulting 3D density field each
+    // frame, accumulating a fire-toned color by alpha compositing.
+    void setShowVortexVolume(bool show);
+
 signals:
     // Fired whenever the displayed slice's value range changes (new frame,
     // field, axis, or position) -- drives ColorLegendWidget's bar.
@@ -93,8 +109,13 @@ private:
     void rebuildSlice(); // re-extracts the CPU slice buffer, re-uploads the texture, recomputes the quad corners
     void rebuildStreamlines();
     void rebuildArrows();
+    // Computes Q-criterion on the grid, uploads it as a 3D texture, and
+    // rebuilds the domain-bounds proxy cube the fragment shader ray-marches
+    // through.
+    void rebuildVortexVolume();
     [[nodiscard]] QMatrix4x4 viewMatrix() const;
     [[nodiscard]] QMatrix4x4 projectionMatrix() const;
+    [[nodiscard]] QVector3D eyePosition() const; // orbit camera's world/domain-space eye position
     // Trilinear-interpolated value of one field array at a point in
     // domain-space coordinates (same [0,Lx]x[0,Ly]x[0,Lz] frame as the
     // slice quads) -- shared by sampleVelocity (u/v/w) and the mesh
@@ -146,6 +167,19 @@ private:
     // grid mostly missed the object; a denser sheet of lines hugging its
     // silhouette reads much closer to typical CFD streamline renders.
     int vectorDensity_ = 18;
+
+    // Vortex-core volume: a proxy cube spanning [0,Lx]x[0,Ly]x[0,Lz]
+    // (position-only, matches the domain frame every other overlay
+    // already uses) that the fragment shader ray-marches through,
+    // sampling a 3D texture of the (normalized, Q>0-only) Q-criterion
+    // field.
+    std::unique_ptr<QOpenGLShaderProgram> volumeProgram_;
+    QOpenGLBuffer volumeBoxVbo_{QOpenGLBuffer::VertexBuffer};
+    QOpenGLVertexArrayObject volumeBoxVao_;
+    unsigned int volumeTexture_ = 0;
+    bool showVortexVolume_ = false;
+    bool volumeDirty_ = false;
+    bool haveVolume_ = false;
 
     std::shared_ptr<cfd::io::ResultsCacheReader> reader_;
     cfd::io::ResultsFrame currentFrame_;

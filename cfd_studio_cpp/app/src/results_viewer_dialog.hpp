@@ -56,6 +56,7 @@ private:
     QCheckBox* streamlinesCheckbox_ = nullptr;
     QCheckBox* arrowsCheckbox_ = nullptr;
     QSlider* densitySlider_ = nullptr;
+    QCheckBox* vortexVolumeCheckbox_ = nullptr;
     QSlider* frameSlider_ = nullptr;
     QLabel* frameTimeLabel_ = nullptr;
     QPushButton* playPauseButton_ = nullptr;

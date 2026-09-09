@@ -121,6 +121,92 @@ void main() {
     fragColor = vec4(vColor, 1.0);
 }
 )";
+
+// Proxy geometry for the vortex-volume ray marcher: a cube spanning the
+// domain bounds. Just passes its own (domain-space) position through --
+// the fragment shader uses it only to know which screen pixels the box
+// could possibly cover; the actual march bounds come from an analytic
+// ray-box test against uBoxMin/uBoxMax, not from which face got
+// rasterized, so this works whether the camera is inside or outside the
+// box without needing any special face-culling trick.
+const char* kVolumeVertexShader = R"(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+uniform mat4 uMvp;
+out vec3 vWorldPos;
+void main() {
+    vWorldPos = aPos;
+    gl_Position = uMvp * vec4(aPos, 1.0);
+}
+)";
+
+// Front-to-back alpha-composited ray march through the Q-criterion 3D
+// texture, colored with a fire-style ramp (dark -> red -> orange -> hot
+// white) -- distinct from flow_colormap_sample()'s rainbow (used by
+// streamlines/arrows) since a volumetric "smoke" render reads more like
+// typical vortex-core visualizations with a fire palette than a rainbow
+// one.
+const char* kVolumeFragmentShader = R"(
+#version 330 core
+in vec3 vWorldPos;
+uniform vec3 uCameraPos;
+uniform vec3 uBoxMin;
+uniform vec3 uBoxMax;
+uniform sampler3D uVolume;
+out vec4 fragColor;
+
+vec3 fireColormap(float t) {
+    const vec3 c0 = vec3(0.02, 0.02, 0.03);
+    const vec3 c1 = vec3(0.35, 0.05, 0.02);
+    const vec3 c2 = vec3(0.85, 0.25, 0.02);
+    const vec3 c3 = vec3(0.98, 0.65, 0.08);
+    const vec3 c4 = vec3(1.0, 0.98, 0.85);
+    float t4 = clamp(t, 0.0, 1.0) * 4.0;
+    vec3 col = c0;
+    col = mix(col, c1, clamp(t4 - 0.0, 0.0, 1.0));
+    col = mix(col, c2, clamp(t4 - 1.0, 0.0, 1.0));
+    col = mix(col, c3, clamp(t4 - 2.0, 0.0, 1.0));
+    col = mix(col, c4, clamp(t4 - 3.0, 0.0, 1.0));
+    return col;
+}
+
+void main() {
+    vec3 rayDir = normalize(vWorldPos - uCameraPos);
+    vec3 invDir = 1.0 / rayDir;
+    vec3 t0s = (uBoxMin - uCameraPos) * invDir;
+    vec3 t1s = (uBoxMax - uCameraPos) * invDir;
+    vec3 tsMin = min(t0s, t1s);
+    vec3 tsMax = max(t0s, t1s);
+    float tNear = max(max(tsMin.x, tsMin.y), tsMin.z);
+    float tFar = min(min(tsMax.x, tsMax.y), tsMax.z);
+    tNear = max(tNear, 0.0); // camera may be inside the box
+    if (tNear >= tFar) discard;
+
+    const int kSteps = 96;
+    float stepSize = (tFar - tNear) / float(kSteps);
+    vec3 boxSize = uBoxMax - uBoxMin;
+
+    vec4 accum = vec4(0.0);
+    for (int i = 0; i < kSteps; ++i) {
+        float t = tNear + (float(i) + 0.5) * stepSize;
+        vec3 p = uCameraPos + rayDir * t;
+        vec3 frac = (p - uBoxMin) / boxSize;
+        // The CPU side uploads the (i-slowest/k-fastest) Q field with
+        // GL width=nz, height=ny, depth=nx -- see rebuildVortexVolume() --
+        // so texture axes are (s,t,r) = (zFrac, yFrac, xFrac).
+        float density = texture(uVolume, vec3(frac.z, frac.y, frac.x)).r;
+        if (density > 0.02) {
+            vec3 color = fireColormap(density);
+            float alpha = clamp(density * 1.6, 0.0, 1.0) * clamp(stepSize * 6.0, 0.0, 1.0);
+            accum.rgb += (1.0 - accum.a) * color * alpha;
+            accum.a += (1.0 - accum.a) * alpha;
+            if (accum.a > 0.98) break;
+        }
+    }
+    if (accum.a < 0.01) discard;
+    fragColor = accum;
+}
+)";
 } // namespace
 
 ResultsViewerWidget::ResultsViewerWidget(QWidget* parent) : QOpenGLWidget(parent) {
@@ -133,7 +219,9 @@ ResultsViewerWidget::~ResultsViewerWidget() {
     sliceVbo_.destroy();
     streamlineVbo_.destroy();
     arrowVbo_.destroy();
+    volumeBoxVbo_.destroy();
     if (sliceTexture_ != 0) glDeleteTextures(1, &sliceTexture_);
+    if (volumeTexture_ != 0) glDeleteTextures(1, &volumeTexture_);
     doneCurrent();
 }
 
@@ -161,6 +249,11 @@ void ResultsViewerWidget::initializeGL() {
     vectorProgram_->addShaderFromSourceCode(QOpenGLShader::Fragment, kVectorFragmentShader);
     vectorProgram_->link();
 
+    volumeProgram_ = std::make_unique<QOpenGLShaderProgram>();
+    volumeProgram_->addShaderFromSourceCode(QOpenGLShader::Vertex, kVolumeVertexShader);
+    volumeProgram_->addShaderFromSourceCode(QOpenGLShader::Fragment, kVolumeFragmentShader);
+    volumeProgram_->link();
+
     meshVao_.create();
     sliceVao_.create();
     sliceVbo_.create();
@@ -168,6 +261,8 @@ void ResultsViewerWidget::initializeGL() {
     streamlineVbo_.create();
     arrowVao_.create();
     arrowVbo_.create();
+    volumeBoxVao_.create();
+    volumeBoxVbo_.create();
 
     glGenTextures(1, &sliceTexture_);
     glBindTexture(GL_TEXTURE_2D, sliceTexture_);
@@ -175,6 +270,14 @@ void ResultsViewerWidget::initializeGL() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenTextures(1, &volumeTexture_);
+    glBindTexture(GL_TEXTURE_3D, volumeTexture_);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 }
 
 void ResultsViewerWidget::resizeGL(int w, int h) {
@@ -229,6 +332,7 @@ void ResultsViewerWidget::setFrame(int index) {
     sliceDirty_ = true;
     streamlinesDirty_ = true; // velocity field changed
     arrowsDirty_ = true;
+    volumeDirty_ = true; // Q-criterion depends on the velocity field
     update();
 }
 
@@ -269,6 +373,12 @@ void ResultsViewerWidget::setVectorDensity(int density) {
     vectorDensity_ = std::clamp(density, 2, 60);
     streamlinesDirty_ = true;
     arrowsDirty_ = true;
+    update();
+}
+
+void ResultsViewerWidget::setShowVortexVolume(bool show) {
+    showVortexVolume_ = show;
+    if (show) volumeDirty_ = true;
     update();
 }
 
@@ -740,12 +850,118 @@ void ResultsViewerWidget::rebuildArrows() {
     arrowVao_.release();
 }
 
-QMatrix4x4 ResultsViewerWidget::viewMatrix() const {
+void ResultsViewerWidget::rebuildVortexVolume() {
+    volumeDirty_ = false;
+    haveVolume_ = false;
+    if (!haveFrame_ || !reader_ || !showVortexVolume_) return;
+
+    int nx = reader_->nx(), ny = reader_->ny(), nz = reader_->nz();
+    double dx = reader_->dx(), dy = reader_->dy(), dz = reader_->dz();
+    const auto& u = currentFrame_.velocity_u;
+    const auto& v = currentFrame_.velocity_v;
+    const auto& w = currentFrame_.velocity_w;
+    if (static_cast<int>(u.size()) != nx * ny * nz) return;
+
+    auto clampi = [](int val, int n) { return std::clamp(val, 0, n - 1); };
+    auto at = [&](const std::vector<double>& f, int i, int j, int k) {
+        i = clampi(i, nx);
+        j = clampi(j, ny);
+        k = clampi(k, nz);
+        return f[static_cast<std::size_t>(i) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz)
+                 + static_cast<std::size_t>(j) * static_cast<std::size_t>(nz) + static_cast<std::size_t>(k)];
+    };
+
+    // Q-criterion: 0.5*(||rotation-rate||^2 - ||strain-rate||^2) from the
+    // velocity gradient tensor -- positive where rotation dominates strain,
+    // the standard scalar for identifying vortex cores (unlike raw
+    // vorticity magnitude, which also lights up ordinary shear layers,
+    // e.g. right at the object's own boundary layer).
+    std::vector<float> qField(static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz),
+                               0.0f);
+    for (int i = 0; i < nx; ++i) {
+        for (int j = 0; j < ny; ++j) {
+            for (int k = 0; k < nz; ++k) {
+                double dudx = (at(u, i + 1, j, k) - at(u, i - 1, j, k)) / (2.0 * dx);
+                double dudy = (at(u, i, j + 1, k) - at(u, i, j - 1, k)) / (2.0 * dy);
+                double dudz = (at(u, i, j, k + 1) - at(u, i, j, k - 1)) / (2.0 * dz);
+                double dvdx = (at(v, i + 1, j, k) - at(v, i - 1, j, k)) / (2.0 * dx);
+                double dvdy = (at(v, i, j + 1, k) - at(v, i, j - 1, k)) / (2.0 * dy);
+                double dvdz = (at(v, i, j, k + 1) - at(v, i, j, k - 1)) / (2.0 * dz);
+                double dwdx = (at(w, i + 1, j, k) - at(w, i - 1, j, k)) / (2.0 * dx);
+                double dwdy = (at(w, i, j + 1, k) - at(w, i, j - 1, k)) / (2.0 * dy);
+                double dwdz = (at(w, i, j, k + 1) - at(w, i, j, k - 1)) / (2.0 * dz);
+
+                double Sxy = 0.5 * (dudy + dvdx), Sxz = 0.5 * (dudz + dwdx), Syz = 0.5 * (dvdz + dwdy);
+                double Oxy = 0.5 * (dudy - dvdx), Oxz = 0.5 * (dudz - dwdx), Oyz = 0.5 * (dvdz - dwdy);
+                double S2 = dudx * dudx + dvdy * dvdy + dwdz * dwdz + 2.0 * (Sxy * Sxy + Sxz * Sxz + Syz * Syz);
+                double O2 = 2.0 * (Oxy * Oxy + Oxz * Oxz + Oyz * Oyz);
+                double q = 0.5 * (O2 - S2);
+
+                std::size_t flat = static_cast<std::size_t>(i) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz)
+                                  + static_cast<std::size_t>(j) * static_cast<std::size_t>(nz) + static_cast<std::size_t>(k);
+                qField[flat] = static_cast<float>(std::max(q, 0.0));
+            }
+        }
+    }
+
+    // Zero it inside/at the solid object so the body itself never reads as
+    // a false "vortex" -- boundary-layer velocity gradients right at a
+    // no-slip wall are large and rotation-dominated by construction, which
+    // would otherwise paint the object's own surface into the volume.
+    for (std::size_t idx = 0; idx < qField.size() && idx < currentFrame_.obstacle.size(); ++idx) {
+        if (currentFrame_.obstacle[idx] != 0.0f) qField[idx] = 0.0f;
+    }
+
+    float qmax = 0.0f;
+    for (float q : qField) qmax = std::max(qmax, q);
+    if (qmax < 1e-12f) qmax = 1e-12f;
+    for (float& q : qField) q /= qmax; // normalize to 0..1 for the shader's density->alpha transfer function
+
+    glBindTexture(GL_TEXTURE_3D, volumeTexture_);
+    // GL's (width,height,depth) order must match the data's own fastest-to-
+    // slowest axis order: qField is i-slowest/k-fastest (nx*ny*nz layout,
+    // same convention as Fields3D everywhere else in this app), so
+    // width=nz (fastest), height=ny, depth=nx (slowest) -- NOT (nx,ny,nz).
+    // The fragment shader's texture lookup mirrors this with (s,t,r) =
+    // (zFrac, yFrac, xFrac).
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, nz, ny, nx, 0, GL_RED, GL_FLOAT, qField.data());
+
+    double Lx = nx * dx, Ly = ny * dy, Lz = nz * dz;
+    // clang-format off
+    float box[] = {
+        // -X                                          +X
+        0,0,0,  0,(float)Ly,0,  0,(float)Ly,(float)Lz,  0,0,0,  0,(float)Ly,(float)Lz,  0,0,(float)Lz,
+        (float)Lx,0,0,  (float)Lx,0,(float)Lz,  (float)Lx,(float)Ly,(float)Lz,  (float)Lx,0,0,  (float)Lx,(float)Ly,(float)Lz,  (float)Lx,(float)Ly,0,
+        // -Y                                          +Y
+        0,0,0,  (float)Lx,0,0,  (float)Lx,0,(float)Lz,  0,0,0,  (float)Lx,0,(float)Lz,  0,0,(float)Lz,
+        0,(float)Ly,0,  0,(float)Ly,(float)Lz,  (float)Lx,(float)Ly,(float)Lz,  0,(float)Ly,0,  (float)Lx,(float)Ly,(float)Lz,  (float)Lx,(float)Ly,0,
+        // -Z                                          +Z
+        0,0,0,  0,(float)Ly,0,  (float)Lx,(float)Ly,0,  0,0,0,  (float)Lx,(float)Ly,0,  (float)Lx,0,0,
+        0,0,(float)Lz,  (float)Lx,0,(float)Lz,  (float)Lx,(float)Ly,(float)Lz,  0,0,(float)Lz,  (float)Lx,(float)Ly,(float)Lz,  0,(float)Ly,(float)Lz,
+    };
+    // clang-format on
+
+    volumeBoxVao_.bind();
+    volumeBoxVbo_.bind();
+    volumeBoxVbo_.allocate(box, static_cast<int>(sizeof(box)));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), reinterpret_cast<void*>(0));
+    volumeBoxVbo_.release();
+    volumeBoxVao_.release();
+
+    haveVolume_ = true;
+}
+
+QVector3D ResultsViewerWidget::eyePosition() const {
     float yawRad = yaw_ * kDegToRad;
     float pitchRad = pitch_ * kDegToRad;
-    QVector3D eye(center_.x() + distance_ * std::cos(pitchRad) * std::sin(yawRad),
-                  center_.y() + distance_ * std::sin(pitchRad),
-                  center_.z() + distance_ * std::cos(pitchRad) * std::cos(yawRad));
+    return QVector3D(center_.x() + distance_ * std::cos(pitchRad) * std::sin(yawRad),
+                      center_.y() + distance_ * std::sin(pitchRad),
+                      center_.z() + distance_ * std::cos(pitchRad) * std::cos(yawRad));
+}
+
+QMatrix4x4 ResultsViewerWidget::viewMatrix() const {
+    QVector3D eye = eyePosition();
     QMatrix4x4 view;
     view.lookAt(eye, center_, QVector3D(0, 1, 0));
     return view;
@@ -768,6 +984,7 @@ void ResultsViewerWidget::paintGL() {
     if (sliceDirty_) rebuildSlice();
     if (streamlinesDirty_) rebuildStreamlines();
     if (arrowsDirty_) rebuildArrows();
+    if (volumeDirty_) rebuildVortexVolume();
 
     QMatrix4x4 mvp = projectionMatrix() * viewMatrix();
 
@@ -819,6 +1036,36 @@ void ResultsViewerWidget::paintGL() {
         }
 
         vectorProgram_->release();
+    }
+
+    if (showVortexVolume_ && haveVolume_ && reader_) {
+        volumeProgram_->bind();
+        volumeProgram_->setUniformValue("uMvp", mvp);
+        volumeProgram_->setUniformValue("uCameraPos", eyePosition());
+        volumeProgram_->setUniformValue("uBoxMin", QVector3D(0.0f, 0.0f, 0.0f));
+        volumeProgram_->setUniformValue("uBoxMax",
+                                         QVector3D(static_cast<float>(reader_->nx() * reader_->dx()),
+                                                    static_cast<float>(reader_->ny() * reader_->dy()),
+                                                    static_cast<float>(reader_->nz() * reader_->dz())));
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_3D, volumeTexture_);
+        volumeProgram_->setUniformValue("uVolume", 0);
+
+        // Premultiplied-alpha "over" blending, matching how the fragment
+        // shader accumulates accum.rgb -- depth test stays on (so the
+        // volume is naturally clipped by nearer opaque geometry like the
+        // mesh at the box's own boundary), but depth write is off so this
+        // translucent pass doesn't occlude anything drawn after it.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        volumeBoxVao_.bind();
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+        volumeBoxVao_.release();
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+
+        volumeProgram_->release();
     }
 }
 
