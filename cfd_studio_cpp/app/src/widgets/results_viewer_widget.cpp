@@ -195,9 +195,24 @@ void main() {
         // GL width=nz, height=ny, depth=nx -- see rebuildVortexVolume() --
         // so texture axes are (s,t,r) = (zFrac, yFrac, xFrac).
         float density = texture(uVolume, vec3(frac.z, frac.y, frac.x)).r;
-        if (density > 0.02) {
-            vec3 color = fireColormap(density);
-            float alpha = clamp(density * 1.6, 0.0, 1.0) * clamp(stepSize * 6.0, 0.0, 1.0);
+        // Measured against a real run (see the commit message): the
+        // positive-Q population is extremely right-skewed -- the 95th
+        // percentile is ~0, only the top ~2% carries real signal -- and
+        // even the loosest useful threshold only forms runs of a handful
+        // of cells along any grid axis, i.e. the qualifying region genuinely
+        // is small/tight, not a broad diffuse haze. The earlier saturation
+        // came from the absorption coefficient being tuned far too high for
+        // the actual physical run lengths involved (a few tenths of a
+        // domain-unit): a proper Beer-Lambert law (alpha per unit
+        // *distance*, not per *step*, so total opacity is a function of how
+        // much physical distance of dense material a ray crosses,
+        // independent of kSteps) with a coefficient sized to that real
+        // scale stays visible without blowing out.
+        float shaped = clamp((density - 0.35) / 0.65, 0.0, 1.0);
+        shaped = shaped * shaped;
+        if (shaped > 0.0) {
+            vec3 color = fireColormap(shaped);
+            float alpha = 1.0 - exp(-shaped * 1.0 * stepSize);
             accum.rgb += (1.0 - accum.a) * color * alpha;
             accum.a += (1.0 - accum.a) * alpha;
             if (accum.a > 0.98) break;
@@ -912,10 +927,24 @@ void ResultsViewerWidget::rebuildVortexVolume() {
         if (currentFrame_.obstacle[idx] != 0.0f) qField[idx] = 0.0f;
     }
 
-    float qmax = 0.0f;
-    for (float q : qField) qmax = std::max(qmax, q);
-    if (qmax < 1e-12f) qmax = 1e-12f;
-    for (float& q : qField) q /= qmax; // normalize to 0..1 for the shader's density->alpha transfer function
+    // Normalize against the 98th percentile of the positive values, not the
+    // single global max: one extreme outlier cell (e.g. right at a
+    // stagnation point or a sharp mesh feature) squashes every genuine
+    // wake-vortex structure down near the low end of the 0..1 range,
+    // making them invisible to the shader's transfer function even though
+    // they're the actual vortex cores worth showing.
+    std::vector<float> positives;
+    positives.reserve(qField.size() / 16);
+    for (float q : qField) {
+        if (q > 0.0f) positives.push_back(q);
+    }
+    float qref = 1e-12f;
+    if (!positives.empty()) {
+        std::sort(positives.begin(), positives.end());
+        std::size_t idx = static_cast<std::size_t>(0.98 * static_cast<double>(positives.size() - 1));
+        qref = std::max(positives[idx], 1e-12f);
+    }
+    for (float& q : qField) q = std::min(q / qref, 1.0f); // values above the percentile just clamp to 1
 
     glBindTexture(GL_TEXTURE_3D, volumeTexture_);
     // GL's (width,height,depth) order must match the data's own fastest-to-
