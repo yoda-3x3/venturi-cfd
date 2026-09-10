@@ -1,7 +1,7 @@
 # Venturi CFD
 
 A desktop CFD app with a live preview and direct ParaView export, covering both quick
-2D scenarios and custom 3D geometry from an uploaded mesh file.
+2D scenarios and custom 3D geometry from an uploaded mesh file. ***NOTE: This program is still under development and does not work perfectly. Use it at your own risk***
 
 ## What it does
 
