@@ -39,6 +39,9 @@ A desktop CFD app with a live preview and direct ParaView export, covering both 
   re-runs reuse the cached result instantly (25x+ speedup in testing), and changing
   only Re/steps/threads still reuses the voxelization step. **Force re-run** bypasses
   the cache.
+- **Viewer**: A program viewer has been added; this is to prevent ParaView throttling for lower-end laptops and computers. As of
+  right now, there is a small delay where the program says it is "not responding." After about 2-3 minutes, it should open the viewer
+  and show your model. A more streamlined model with Q-Cores is being developed.
   
 ## Setup
 
