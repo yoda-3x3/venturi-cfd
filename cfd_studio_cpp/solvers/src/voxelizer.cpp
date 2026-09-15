@@ -20,6 +20,47 @@ inline std::size_t idx3d(int i, int j, int k, int ny, int nz) {
          + static_cast<std::size_t>(j) * static_cast<std::size_t>(nz)
          + static_cast<std::size_t>(k);
 }
+
+// One point-in-mesh sample per cell (at `subdiv`=1, its center) marks a
+// whole cell solid/fluid -- fine for most geometry, but a thin feature
+// (an aircraft wing, a fin) can be thinner than one coarse grid cell, and
+// at low grid resolution it's entirely possible for the mesh to pass
+// through many cells' *volumes* while missing every single cell *center*,
+// yielding a solid mask that's empty everywhere even though the mesh
+// clearly intersects the grid. `subdiv`>1 samples an NxNxN sub-grid
+// within each cell instead and marks it solid if any sub-sample hits,
+// closing that gap at the cost of subdiv^3 BVH queries per cell.
+std::vector<std::uint8_t> sample_mask(const MeshBVH& bvh, int nx, int ny, int nz, double Lx, double Ly, double Lz,
+                                       int subdiv) {
+    std::vector<std::uint8_t> mask(static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz), 0);
+    double dx = Lx / nx, dy = Ly / ny, dz = Lz / nz;
+    for (int i = 0; i < nx; ++i) {
+        for (int j = 0; j < ny; ++j) {
+            for (int k = 0; k < nz; ++k) {
+                bool solid = false;
+                for (int su = 0; su < subdiv && !solid; ++su) {
+                    double x = i * dx + (su + 0.5) / subdiv * dx;
+                    for (int sv = 0; sv < subdiv && !solid; ++sv) {
+                        double y = j * dy + (sv + 0.5) / subdiv * dy;
+                        for (int sw = 0; sw < subdiv && !solid; ++sw) {
+                            double z = k * dz + (sw + 0.5) / subdiv * dz;
+                            solid = bvh.contains(Vec3{x, y, z});
+                        }
+                    }
+                }
+                mask[idx3d(i, j, k, ny, nz)] = solid ? 1 : 0;
+            }
+        }
+    }
+    return mask;
+}
+
+bool any_set(const std::vector<std::uint8_t>& mask) {
+    for (auto v : mask) {
+        if (v) return true;
+    }
+    return false;
+}
 } // namespace
 
 PreparedGeometry prepare_geometry(
@@ -102,18 +143,16 @@ PreparedGeometry prepare_internal_geometry(
 
 std::vector<std::uint8_t> voxelize_to_grid(const Mesh& mesh, int nx, int ny, int nz, double Lx, double Ly, double Lz) {
     MeshBVH bvh(mesh);
-    std::vector<std::uint8_t> mask(static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz), 0);
-    double dx = Lx / nx, dy = Ly / ny, dz = Lz / nz;
-    for (int i = 0; i < nx; ++i) {
-        double x = (i + 0.5) * dx;
-        for (int j = 0; j < ny; ++j) {
-            double y = (j + 0.5) * dy;
-            for (int k = 0; k < nz; ++k) {
-                double z = (k + 0.5) * dz;
-                mask[idx3d(i, j, k, ny, nz)] = bvh.contains(Vec3{x, y, z}) ? 1 : 0;
-            }
-        }
-    }
+    // Single center sample per cell is the fast, common-case path (matches
+    // this function's cost before this fix, unchanged for every geometry
+    // that doesn't hit the thin-feature gap sample_mask()'s doc comment
+    // describes). Only pay for the denser retry on the geometries that
+    // actually need it: an empty result at nx*ny*nz cells almost certainly
+    // means at least one dimension of the object is thinner than a grid
+    // cell somewhere, not that the object is genuinely absent from the
+    // domain (prepare_geometry() always places it well inside the grid).
+    std::vector<std::uint8_t> mask = sample_mask(bvh, nx, ny, nz, Lx, Ly, Lz, 1);
+    if (!any_set(mask)) mask = sample_mask(bvh, nx, ny, nz, Lx, Ly, Lz, 4);
     return mask;
 }
 
@@ -123,18 +162,12 @@ std::vector<std::uint8_t> voxelize_internal_to_grid(
 
     MeshBVH bvh(mesh);
     std::size_t n = static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz);
-    std::vector<std::uint8_t> inside_mask(n, 0);
-    double dx = Lx / nx, dy = Ly / ny, dz = Lz / nz;
-    for (int i = 0; i < nx; ++i) {
-        double x = (i + 0.5) * dx;
-        for (int j = 0; j < ny; ++j) {
-            double y = (j + 0.5) * dy;
-            for (int k = 0; k < nz; ++k) {
-                double z = (k + 0.5) * dz;
-                inside_mask[idx3d(i, j, k, ny, nz)] = bvh.contains(Vec3{x, y, z}) ? 1 : 0;
-            }
-        }
-    }
+    // Same thin-wall-vs-coarse-grid gap as voxelize_to_grid: a thin pipe
+    // wall can fall entirely between single-center-sample cells, wrongly
+    // reading as "no wall material anywhere" -- retry denser before
+    // concluding that.
+    std::vector<std::uint8_t> inside_mask = sample_mask(bvh, nx, ny, nz, Lx, Ly, Lz, 1);
+    if (!any_set(inside_mask)) inside_mask = sample_mask(bvh, nx, ny, nz, Lx, Ly, Lz, 4);
 
     std::vector<std::uint8_t> complement(n);
     for (std::size_t i = 0; i < n; ++i) complement[i] = inside_mask[i] ? 0 : 1;
