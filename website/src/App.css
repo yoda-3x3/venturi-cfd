@@ -1,0 +1,283 @@
+/* ---------- nav ---------- */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid var(--border);
+  background: rgba(10, 14, 20, 0.85);
+  backdrop-filter: blur(8px);
+}
+
+.nav-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wordmark {
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
+}
+
+.nav nav {
+  display: flex;
+  gap: 24px;
+}
+
+.nav nav a {
+  text-decoration: none;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  transition: color 0.15s ease;
+}
+
+.nav nav a:hover {
+  color: var(--text);
+}
+
+/* ---------- hero ---------- */
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: 96px 24px 80px;
+  display: flex;
+  justify-content: center;
+  isolation: isolate;
+}
+
+.hero-flow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(
+      ellipse 60% 50% at 50% -10%,
+      rgba(79, 209, 255, 0.16),
+      transparent 70%
+    ),
+    var(--bg);
+}
+
+.stream {
+  position: absolute;
+  left: -10%;
+  width: 120%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(79, 209, 255, 0.5),
+    rgba(124, 143, 255, 0.35),
+    transparent
+  );
+  opacity: 0.5;
+  animation: drift 14s ease-in-out infinite;
+}
+
+.stream-1 {
+  top: 18%;
+  animation-duration: 16s;
+}
+.stream-2 {
+  top: 42%;
+  animation-duration: 12s;
+  animation-delay: -3s;
+}
+.stream-3 {
+  top: 64%;
+  animation-duration: 18s;
+  animation-delay: -7s;
+}
+.stream-4 {
+  top: 84%;
+  animation-duration: 13s;
+  animation-delay: -1s;
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translateX(-2%) scaleX(1);
+  }
+  50% {
+    transform: translateX(2%) scaleX(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream {
+    animation: none;
+  }
+}
+
+.hero-content {
+  max-width: 680px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+.hero h1 {
+  font-size: clamp(1.9rem, 4vw, 2.9rem);
+  font-weight: 700;
+  background: linear-gradient(120deg, var(--text) 30%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.lede {
+  color: var(--text-dim);
+  font-size: 1.08rem;
+  max-width: 560px;
+  margin: 0 0 32px;
+}
+
+/* ---------- buttons ---------- */
+.cta-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 22px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition:
+    transform 0.12s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+  border: 1px solid transparent;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  color: #06111d;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+
+.btn-secondary {
+  background: var(--bg-raised);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  border-color: var(--accent);
+}
+
+/* ---------- features ---------- */
+.features {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 64px 24px;
+}
+
+.features h2,
+.download h2 {
+  text-align: center;
+  font-size: 1.7rem;
+  margin-bottom: 40px;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+
+.feature-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px 24px;
+  transition: border-color 0.15s ease;
+}
+
+.feature-card:hover {
+  border-color: var(--accent);
+}
+
+.feature-card h3 {
+  font-size: 1.05rem;
+  color: var(--text);
+}
+
+.feature-card p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.92rem;
+}
+
+/* ---------- download ---------- */
+.download {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 32px 24px 96px;
+  text-align: center;
+}
+
+.download > p:first-of-type {
+  color: var(--text-dim);
+  margin-bottom: 32px;
+}
+
+.fine-print {
+  margin-top: 28px;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+/* ---------- footer ---------- */
+.footer {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding: 24px;
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.footer a {
+  text-decoration: none;
+}
+
+.footer a:hover {
+  color: var(--accent);
+}
