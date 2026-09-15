@@ -12,17 +12,27 @@ namespace {
 
 Mesh read_stl_binary(std::ifstream& f, std::uint32_t triangle_count) {
     Mesh mesh;
-    mesh.vertices.reserve(triangle_count * 3);
+    mesh.vertices.reserve(static_cast<std::size_t>(triangle_count) * 3);
     mesh.triangles.reserve(triangle_count);
 
+    // Read the whole triangle block in one call instead of 3 small
+    // f.read()s per triangle (normal/verts/attr): with hundreds of
+    // thousands of triangles that's millions of tiny std::ifstream::read()
+    // calls, each paying real per-call iostream overhead (sentry
+    // construction, streambuf virtual dispatch). One big read plus
+    // in-memory pointer walking is both far fewer stream calls and,
+    // incidentally, simpler.
+    constexpr std::size_t kRecordSize = 12 + 36 + 2; // normal(3 floats) + verts(9 floats) + attribute byte count
+    std::vector<char> buffer(static_cast<std::size_t>(triangle_count) * kRecordSize);
+    f.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    if (!f) throw std::runtime_error("read_stl: truncated binary STL file");
+
+    const char* p = buffer.data();
     for (std::uint32_t t = 0; t < triangle_count; ++t) {
-        float normal[3];
+        p += 12; // normal -- unused, mesh normals are recomputed from vertices elsewhere
         float verts[9];
-        std::uint16_t attr;
-        f.read(reinterpret_cast<char*>(normal), sizeof(normal));
-        f.read(reinterpret_cast<char*>(verts), sizeof(verts));
-        f.read(reinterpret_cast<char*>(&attr), sizeof(attr));
-        if (!f) throw std::runtime_error("read_stl: truncated binary STL file");
+        std::memcpy(verts, p, sizeof(verts));
+        p += 36 + 2; // verts, then skip the attribute byte count
 
         auto base = static_cast<std::uint32_t>(mesh.vertices.size());
         mesh.vertices.push_back({verts[0], verts[1], verts[2]});

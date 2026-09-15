@@ -39,10 +39,11 @@ A desktop CFD app with a live preview and direct ParaView export, covering both 
   reruns reuse the cached result instantly (25x+ speedup in testing), and changing
   only Re/steps/threads still reuses the voxelization step. **Force re-run** bypasses
   the cache.
-- **Viewer**: A program viewer has been added; this is to prevent ParaView throttling for lower-end laptops and computers. As of
-  right now, there is a small delay where the program says it is "not responding." After about 2-3 minutes, it should open the viewer
-  and show your model. A more streamlined model with Q-Cores is being developed. If you prefer ParaView there is still an option to 
-  open in ParaView.
+- **Viewer**: A program viewer has been added; this is to prevent ParaView throttling for lower-end laptops and computers. The
+  previous "not responding" delay of 2-3 minutes on open has been fixed — it was `write_stl`/`read_stl` round-tripping the mesh as
+  ASCII text (~200 bytes/triangle, and slow to parse back) instead of the standard binary STL format (~50 bytes/triangle); switching
+  to binary cut a real-world 520k-triangle mesh's read time from ~12s to ~30ms. The viewer also supports a ray-marched vortex-core
+  (Q-criterion) volume render, still being tuned. If you prefer ParaView there is still an option to open in ParaView.
   
 ## Setup
 
