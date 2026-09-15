@@ -175,7 +175,20 @@ double NavierStokes2D::wall_omega(int j, int i, const std::vector<WallDir>& dirs
     for (const auto& d : dirs) {
         int nj = j + d.dj, ni = i + d.di;
         double psi_nb = psi_[idx2(nj, ni, nx_)];
-        double sign = (d.di == 1 || d.dj == 1) ? -1.0 : 1.0;
+        // Thom's formula for vorticity at a (possibly tangentially moving)
+        // wall, derived from a Taylor expansion of psi about the wall
+        // using the known wall-normal derivative (the tangential velocity
+        // ut) and -omega ~= d^2(psi)/dn^2: for a "low" wall (neighbor at
+        // +1, e.g. bottom/left) that's omega = 2(psi_wall-psi_nb)/h^2 +
+        // 2*ut/h, and for a "high" wall (neighbor at -1, e.g. top/right)
+        // it's the same first term but with a MINUS on the ut term. This
+        // was flipped (-1 for "low", +1 for "high") -- invisible on the 3
+        // stationary walls (ut=0 there always), but it reversed the sign
+        // of the only nonzero-ut wall in this app, the lid: fluid right
+        // under the lid came out moving opposite the lid itself, and the
+        // whole cavity vortex spun the wrong way. Verified against the
+        // corrected sign empirically (see the commit this fixes).
+        double sign = (d.di == 1 || d.dj == 1) ? 1.0 : -1.0;
         sum += 2.0 * (psi_wall - psi_nb) / (d.h * d.h) + sign * 2.0 * d.ut / d.h;
     }
     return sum / static_cast<double>(dirs.size());
