@@ -19,7 +19,7 @@
 [Setup]
 AppId={{167606BB-4C5C-4744-BC03-903CD72C3A63}
 AppName=Venturi CFD
-AppVersion=1.0
+AppVersion=1.1.0
 AppPublisher=Venturi CFD
 DefaultDirName={localappdata}\Venturi CFD
 DisableProgramGroupPage=yes
