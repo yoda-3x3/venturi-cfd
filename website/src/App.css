@@ -18,9 +18,18 @@
 }
 
 .wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 700;
   font-size: 1.1rem;
   letter-spacing: 0.01em;
+}
+
+.wordmark-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
 }
 
 .nav nav {
@@ -240,6 +249,44 @@
   margin: 0;
   color: var(--text-dim);
   font-size: 0.92rem;
+}
+
+/* ---------- screenshots ---------- */
+.screenshots {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+.screenshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.screenshot-card {
+  margin: 0;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.screenshot-card:hover {
+  border-color: var(--accent);
+}
+
+.screenshot-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.screenshot-card figcaption {
+  padding: 12px 16px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
 }
 
 /* ---------- download ---------- */

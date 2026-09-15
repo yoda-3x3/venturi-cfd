@@ -141,11 +141,14 @@ void main() {
 )";
 
 // Front-to-back alpha-composited ray march through the Q-criterion 3D
-// texture, colored with a fire-style ramp (dark -> red -> orange -> hot
-// white) -- distinct from flow_colormap_sample()'s rainbow (used by
-// streamlines/arrows) since a volumetric "smoke" render reads more like
-// typical vortex-core visualizations with a fire palette than a rainbow
-// one.
+// texture. Colored with a multi-band "shaded isosurface" transfer function
+// (pale green -> blue -> violet -> orange -> red as density rises) plus a
+// gradient-estimated normal for lightweight diffuse/specular shading, so
+// the volume reads as distinct, lit vortex lobes -- the classic layered
+// look of a multi-isosurface CFD render -- rather than a flat, single-hue
+// haze. Distinct from flow_colormap_sample()'s rainbow (used by
+// streamlines/arrows), which is a 2D line/arrow palette, not a volumetric
+// shading model.
 const char* kVolumeFragmentShader = R"(
 #version 330 core
 in vec3 vWorldPos;
@@ -155,18 +158,37 @@ uniform vec3 uBoxMax;
 uniform sampler3D uVolume;
 out vec4 fragColor;
 
-vec3 fireColormap(float t) {
-    const vec3 c0 = vec3(0.02, 0.02, 0.03);
-    const vec3 c1 = vec3(0.35, 0.05, 0.02);
-    const vec3 c2 = vec3(0.85, 0.25, 0.02);
-    const vec3 c3 = vec3(0.98, 0.65, 0.08);
-    const vec3 c4 = vec3(1.0, 0.98, 0.85);
+// The CPU side uploads the (i-slowest/k-fastest) Q field with GL
+// width=nz, height=ny, depth=nx -- see rebuildVortexVolume() -- so texture
+// axes are (s,t,r) = (zFrac, yFrac, xFrac); every sample goes through this
+// helper so the gradient taps below stay consistent with it.
+float sampleDensity(vec3 frac) {
+    return texture(uVolume, vec3(frac.z, frac.y, frac.x)).r;
+}
+
+// Ordered by rising Q-criterion magnitude, not physical meaning (this is
+// still a single-field render) -- chosen to band visually the way a
+// multi-isosurface CFD figure does: a soft, broad low-level shell reading
+// as pale green, tightening through blue and violet, up to a hot,
+// near-opaque orange/red core at the strongest rotation.
+vec3 bandColormap(float t) {
+    const vec3 cGreen  = vec3(0.45, 0.95, 0.40);
+    const vec3 cBlue   = vec3(0.15, 0.60, 1.00);
+    const vec3 cViolet = vec3(0.68, 0.30, 0.92);
+    const vec3 cOrange = vec3(1.00, 0.58, 0.10);
+    const vec3 cRed    = vec3(0.98, 0.12, 0.10);
     float t4 = clamp(t, 0.0, 1.0) * 4.0;
-    vec3 col = c0;
-    col = mix(col, c1, clamp(t4 - 0.0, 0.0, 1.0));
-    col = mix(col, c2, clamp(t4 - 1.0, 0.0, 1.0));
-    col = mix(col, c3, clamp(t4 - 2.0, 0.0, 1.0));
-    col = mix(col, c4, clamp(t4 - 3.0, 0.0, 1.0));
+    // smoothstep, not a hard clamp() ramp -- a linear mix() has a slope
+    // discontinuity right where each band's clamp() hits 0 or 1, and a
+    // ray sweeping through that seam at a shallow angle turns that kink
+    // into a visible contour line (this is what the first version's
+    // "banding artifact" screenshots actually were, not a texture/step
+    // sampling issue).
+    vec3 col = cGreen;
+    col = mix(col, cBlue,   smoothstep(0.0, 1.0, clamp(t4 - 0.0, 0.0, 1.0)));
+    col = mix(col, cViolet, smoothstep(0.0, 1.0, clamp(t4 - 1.0, 0.0, 1.0)));
+    col = mix(col, cOrange, smoothstep(0.0, 1.0, clamp(t4 - 2.0, 0.0, 1.0)));
+    col = mix(col, cRed,    smoothstep(0.0, 1.0, clamp(t4 - 3.0, 0.0, 1.0)));
     return col;
 }
 
@@ -182,41 +204,75 @@ void main() {
     tNear = max(tNear, 0.0); // camera may be inside the box
     if (tNear >= tFar) discard;
 
-    const int kSteps = 96;
+    const int kSteps = 160;
     float stepSize = (tFar - tNear) / float(kSteps);
     vec3 boxSize = uBoxMax - uBoxMin;
+    vec3 viewDir = -rayDir;
+    // Fixed key light, not tied to the camera -- so the shaded lobes hold
+    // still and read as physical shapes while the user orbits, instead of
+    // relighting (and thus appearing to change shape) every frame.
+    vec3 lightDir = normalize(vec3(0.45, 0.82, 0.35));
 
     vec4 accum = vec4(0.0);
     for (int i = 0; i < kSteps; ++i) {
         float t = tNear + (float(i) + 0.5) * stepSize;
         vec3 p = uCameraPos + rayDir * t;
         vec3 frac = (p - uBoxMin) / boxSize;
-        // The CPU side uploads the (i-slowest/k-fastest) Q field with
-        // GL width=nz, height=ny, depth=nx -- see rebuildVortexVolume() --
-        // so texture axes are (s,t,r) = (zFrac, yFrac, xFrac).
-        float density = texture(uVolume, vec3(frac.z, frac.y, frac.x)).r;
-        // Measured against a real run (see the commit message): the
-        // positive-Q population is extremely right-skewed -- the 95th
-        // percentile is ~0, only the top ~2% carries real signal -- and
-        // even the loosest useful threshold only forms runs of a handful
-        // of cells along any grid axis, i.e. the qualifying region genuinely
-        // is small/tight, not a broad diffuse haze. The earlier saturation
-        // came from the absorption coefficient being tuned far too high for
-        // the actual physical run lengths involved (a few tenths of a
-        // domain-unit): a proper Beer-Lambert law (alpha per unit
-        // *distance*, not per *step*, so total opacity is a function of how
-        // much physical distance of dense material a ray crosses,
-        // independent of kSteps) with a coefficient sized to that real
-        // scale stays visible without blowing out.
-        float shaped = clamp((density - 0.35) / 0.65, 0.0, 1.0);
-        shaped = shaped * shaped;
-        if (shaped > 0.0) {
-            vec3 color = fireColormap(shaped);
-            float alpha = 1.0 - exp(-shaped * 1.0 * stepSize);
-            accum.rgb += (1.0 - accum.a) * color * alpha;
-            accum.a += (1.0 - accum.a) * alpha;
-            if (accum.a > 0.98) break;
-        }
+        float density = sampleDensity(frac);
+        // Measured against a real run (see the commit this replaced): the
+        // positive-Q population is extremely right-skewed -- only the top
+        // ~2% carries real signal, and even the loosest useful threshold
+        // only forms tight runs of cells, not a broad diffuse haze. Kept
+        // deliberately close to that finding (a slightly lower floor than
+        // before, to give the outer "green shell" band room to be visible
+        // at low opacity) rather than reopening the earlier oversaturation
+        // bug.
+        float shaped = clamp((density - 0.30) / 0.70, 0.0, 1.0);
+        if (shaped <= 0.0) continue;
+
+        // Lightweight surface shading: estimate the local density
+        // gradient via central differences and treat its (inverted, since
+        // density falls outward) direction as a normal. Only costs extra
+        // samples on the already-tight qualifying region above, not the
+        // whole ray. e is sized to a few grid cells (not sub-cell) since a
+        // tap smaller than the source Q field's own voxel spacing just
+        // samples trilinear-interpolation noise within one cell instead of
+        // the field's real shape, which reads as a noisy, undefined
+        // surface rather than a smoothly shaded one.
+        float e = 0.02;
+        float gx = sampleDensity(frac + vec3(e, 0.0, 0.0)) - sampleDensity(frac - vec3(e, 0.0, 0.0));
+        float gy = sampleDensity(frac + vec3(0.0, e, 0.0)) - sampleDensity(frac - vec3(0.0, e, 0.0));
+        float gz = sampleDensity(frac + vec3(0.0, 0.0, e)) - sampleDensity(frac - vec3(0.0, 0.0, e));
+        vec3 grad = vec3(gx, gy, gz) / boxSize;
+        vec3 normal = length(grad) > 1e-8 ? normalize(-grad) : viewDir;
+
+        float diffuse = max(dot(normal, lightDir), 0.0);
+        vec3 halfVec = normalize(lightDir + viewDir);
+        float spec = pow(max(dot(normal, halfVec), 0.0), 28.0);
+        float rim = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+
+        vec3 baseColor = bandColormap(shaped);
+        // Shading floor kept high (0.62..1.0, not 0.4..1.0) so the band
+        // hue itself stays legible even where the gradient normal is
+        // noisy or grazing -- the earlier, deeper floor was why the first
+        // version's screenshots read as muddy/desaturated rather than the
+        // vivid reference colors.
+        vec3 shadedColor = baseColor * (0.62 + 0.38 * diffuse) + vec3(1.0) * spec * 0.35 + baseColor * rim * 0.3;
+
+        // Steeper power curve than a plain Beer-Lambert law so the bands
+        // read as near-solid shaded shells (matching the reference look)
+        // rather than a smooth volumetric gradient -- opacity still scales
+        // with physical distance crossed (via stepSize), just ramping up
+        // faster with density. Gentler exponent and higher coefficient
+        // than the first pass: shaped values above threshold now reach
+        // full opacity sooner, so lobes read as solid rather than
+        // translucent smoke over the dark background.
+        float bandAlpha = pow(shaped, 1.2);
+        float alpha = 1.0 - exp(-bandAlpha * 4.0 * stepSize);
+
+        accum.rgb += (1.0 - accum.a) * shadedColor * alpha;
+        accum.a += (1.0 - accum.a) * alpha;
+        if (accum.a > 0.98) break;
     }
     if (accum.a < 0.01) discard;
     fragColor = accum;

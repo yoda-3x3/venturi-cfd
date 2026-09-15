@@ -1,6 +1,27 @@
 import './App.css'
+import screenshot2d from './assets/screenshots/screenshot-2d.webp'
+import screenshotVortex from './assets/screenshots/screenshot-vortex.webp'
+import screenshotStreamlines from './assets/screenshots/screenshot-streamlines.webp'
 
 const REPO_URL = 'https://github.com/yoda-3x3/venturi-cfd'
+
+const screenshots = [
+  {
+    src: screenshot2d,
+    alt: 'Lid-driven cavity 2D scenario, showing the velocity magnitude field and a live convergence plot',
+    caption: '2D Flow Scenarios — live velocity field + convergence plot',
+  },
+  {
+    src: screenshotVortex,
+    alt: 'Results Viewer showing a shaded, multi-colored ray-marched vortex-core (Q-criterion) volume render around an aircraft wake',
+    caption: 'Built-In Results Viewer — shaded vortex-core (Q-criterion) render',
+  },
+  {
+    src: screenshotStreamlines,
+    alt: 'Results Viewer showing rainbow-colored streamlines flowing around a 3D geometry',
+    caption: 'Streamlines colored by local speed',
+  },
+]
 
 const features = [
   {
@@ -38,9 +59,13 @@ function App() {
     <>
       <header className="nav">
         <div className="nav-inner">
-          <span className="wordmark">Venturi CFD</span>
+          <span className="wordmark">
+            <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="wordmark-icon" />
+            Venturi CFD
+          </span>
           <nav>
             <a href="#features">Features</a>
+            <a href="#screenshots">Screenshots</a>
             <a href="#download">Download</a>
             <a href={REPO_URL} target="_blank" rel="noreferrer">
               GitHub
@@ -91,6 +116,18 @@ function App() {
                 <h3>{f.title}</h3>
                 <p>{f.body}</p>
               </div>
+            ))}
+          </div>
+        </section>
+
+        <section id="screenshots" className="screenshots">
+          <h2>See it in action</h2>
+          <div className="screenshot-grid">
+            {screenshots.map((s) => (
+              <figure className="screenshot-card" key={s.src}>
+                <img src={s.src} alt={s.alt} loading="lazy" />
+                <figcaption>{s.caption}</figcaption>
+              </figure>
             ))}
           </div>
         </section>
