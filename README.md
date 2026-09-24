@@ -20,9 +20,9 @@ A desktop CFD app with a live preview and direct ParaView export, covering both 
 - Solves the 3D incompressible Navier-Stokes equations via an explicit projection
   (Chorin) method: uniform inflow, convective outflow, free-slip walls, and the
   geometry enforced as an immersed solid boundary (a virtual wind tunnel).
-- **Multi-core**: kernels are JIT-compiled with numba and parallelized across CPU
-  cores (adjustable thread count); expect a modest speedup, often best around 4-8
-  threads, since this stencil computation tends to be memory-bandwidth-bound.
+- **Multi-core**: kernels are parallelized across CPU cores (adjustable thread
+  count); expect a modest speedup, often best around 4-8 threads, since this stencil
+  computation tends to be memory-bandwidth-bound.
 - Live preview shows a 2D slice through the mid-plane of the domain.
 - **Exports as a real OpenFOAM case**: a full polyMesh (points/faces/owner/
   neighbour/boundary), per-timestep `U`/`p` field files, and a `.foam` placeholder
@@ -47,29 +47,21 @@ A desktop CFD app with a live preview and direct ParaView export, covering both 
   
 ## Setup
 
-```bash
-python -m venv .venv
-.venv\Scripts\pip.exe install -r requirements.txt
-```
--Another way to set it up is using the installer.
-[https://github.com/yoda-3x3/cfd-studio/blob/main/cfd_studio_cpp/installer/output/VenturiCFDSetup.exe](url)
+Grab the Windows installer from the [latest release](https://github.com/yoda-3x3/venturi-cfd/releases),
+or build it yourself from source — see [cfd_studio_cpp/BUILD.md](cfd_studio_cpp/BUILD.md).
 
--Also, **REMEMBER TO INSTALL PARAVIEW TO DISPLAY RESULTS AT [paraview.org](url)
+**REMEMBER TO INSTALL PARAVIEW IF YOU WANT TO DISPLAY OpenFOAM RESULTS OUTSIDE THE
+BUILT-IN VIEWER: [paraview.org](https://www.paraview.org/)**
+
 ## Running it
 
-```bash
-.venv\Scripts\python.exe main.py
-```
-
-On Windows this can also be wired up to a Desktop shortcut pointing `pythonw.exe` at
-`main.py` with this folder as the working directory, so it launches without a console
-window.
+Launch `cfd_studio.exe` (the installer creates a Start Menu shortcut for it).
 
 ## First-time ParaView setup
 
 The app auto-detects ParaView under `C:\Program Files\ParaView*`. If it's installed
 elsewhere, use **Settings > Locate ParaView...** to browse to `paraview.exe` once —
-the path is remembered in `%APPDATA%\CFDParaviewApp\config.json`.
+the path is remembered for next time.
 
 ## Notes
 
