@@ -32,12 +32,15 @@ public:
     MeshBVH(MeshBVH&&) noexcept;
     MeshBVH& operator=(MeshBVH&&) noexcept;
 
-    // Point-in-mesh containment test via ray-casting parity: casts a ray
-    // from `point` and counts triangle crossings along it. Odd count means
-    // inside. Robust against edge/vertex-grazing rays by re-casting with a
-    // perturbed direction if a first attempt lands ambiguously close to a
-    // triangle edge (mirrors the robustness trimesh's own containment
-    // query needs in practice, per solver3d/geometry.py's reliance on it).
+    // Point-in-mesh containment test via ray-casting parity: casts 3 rays
+    // (different, non-axis-aligned directions) from `point` and counts
+    // triangle crossings along each; a ray with an odd crossing count votes
+    // "inside", and the majority (2 of 3) wins. A single ray is fragile
+    // against a non-watertight mesh -- one hole anywhere along that one
+    // direction flips every point behind it, however far from the real
+    // surface -- so 3 differently-angled rays are used and voted rather
+    // than trusted individually, since a hole that misdirects one of them
+    // is common but one that misdirects a majority is not.
     [[nodiscard]] bool contains(const Vec3& point) const;
 
     // Nearest ray-mesh intersection, for interactive picking -- replaces
