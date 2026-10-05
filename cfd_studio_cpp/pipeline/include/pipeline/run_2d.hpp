@@ -6,15 +6,30 @@
 #include <string>
 #include <vector>
 
+#include "solvers/image_scenario_2d.hpp"
 #include "solvers/navier_stokes_2d.hpp"
 
 namespace cfd::pipeline {
 
 struct Run2DOptions {
-    std::string scenario; // "cavity" | "channel" | "obstacle"
-    std::optional<int> nx, ny; // unset -> preset default
+    std::string scenario; // "cavity" | "channel" | "obstacle" | "custom_image"
+    std::optional<int> nx, ny; // unset -> preset default (ignored for "custom_image", see custom_mask below)
     std::optional<double> Re, U, dt;
     std::optional<double> obstacle_x0, obstacle_width, obstacle_height; // unset -> preset default (only used if the preset has_obstacle)
+
+    // Only used when scenario == "custom_image": a solid mask already
+    // oriented for the solver (i.e. already run through
+    // orient_mask_for_solver -- custom_mask_nx/ny are the SOLVER's own
+    // grid dims, which may differ from the uploaded image's own
+    // width/height for an Up/Down flow direction). image_direction is
+    // reapplied on the way out (orient_fields_for_display) so progress
+    // previews and the written VTK series come back out in the image's
+    // original orientation, flowing the direction the user actually
+    // chose, not the solver's own always-left-to-right internal frame.
+    std::optional<std::vector<std::uint8_t>> custom_mask;
+    int custom_mask_nx = 0, custom_mask_ny = 0;
+    cfd::solvers::ImageFlowDirection image_direction = cfd::solvers::ImageFlowDirection::Right;
+
     int n_steps = 2000;
     int output_every = 20;
     std::string output_dir;

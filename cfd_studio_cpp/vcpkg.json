@@ -4,6 +4,7 @@
   "builtin-baseline": "aae277acf4e7de287ddb5e208b5316614de6aad7",
   "dependencies": [
     "eigen3",
-    "qhull"
+    "qhull",
+    "libwebp"
   ]
 }

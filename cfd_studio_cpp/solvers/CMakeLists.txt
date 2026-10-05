@@ -8,6 +8,7 @@ add_library(cfd_solvers STATIC
     src/voxelizer.cpp
     src/orientation.cpp
     src/scenario_presets_2d.cpp
+    src/image_scenario_2d.cpp
     src/performance_presets_3d.cpp
     src/materials.cpp
 )

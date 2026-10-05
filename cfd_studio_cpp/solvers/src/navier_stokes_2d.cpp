@@ -43,9 +43,13 @@ NavierStokes2D::NavierStokes2D(SolverConfig2D config)
                 if (xi >= ob.x0 && xi <= ob.x1()) solid_[idx2(j, i, nx_)] = 1;
             }
         }
+    } else if (cfg_.kind == ScenarioKind2D::ImageObstacle && cfg_.custom_solid_mask) {
+        const auto& mask = *cfg_.custom_solid_mask;
+        if (mask.size() == n) solid_ = mask;
     }
 
-    is_channel_ = cfg_.kind == ScenarioKind2D::Channel || cfg_.kind == ScenarioKind2D::ObstacleScenario;
+    is_channel_ = cfg_.kind == ScenarioKind2D::Channel || cfg_.kind == ScenarioKind2D::ObstacleScenario
+               || cfg_.kind == ScenarioKind2D::ImageObstacle;
     Q_ = cfg_.U * cfg_.Ly;
 
     classify_nodes();

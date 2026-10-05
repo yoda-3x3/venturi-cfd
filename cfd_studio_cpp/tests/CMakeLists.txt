@@ -7,6 +7,7 @@ add_executable(cfd_tests
     solvers/test_navier_stokes_3d.cpp
     solvers/test_navier_stokes_2d.cpp
     solvers/test_navier_stokes_2d_regression.cpp
+    solvers/test_image_scenario_2d.cpp
     solvers/test_voxelizer.cpp
     solvers/test_orientation.cpp
     solvers/test_scenario_presets.cpp

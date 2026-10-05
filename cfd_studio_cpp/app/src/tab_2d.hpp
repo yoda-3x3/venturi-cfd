@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QImage>
 #include <QSettings>
 #include <QThread>
 #include <QWidget>
@@ -16,6 +17,7 @@ class QProgressBar;
 class QLabel;
 class QGroupBox;
 class PlotWidget;
+class DirectionArrowWidget;
 
 // Port of ui/main_window.py's inline 2D-tab construction (_build_left_panel
 // / _build_right_panel / worker lifecycle) -- factored into its own widget
@@ -46,11 +48,13 @@ private slots:
     void onStopped();
     void onErrorOccurred(QString message);
     void onOpenInParaView();
+    void onUploadImage();
 
 private:
     void buildUi();
     void setControlsEnabled(bool running);
     void suggestOutputDir();
+    void updateImagePreviewMask();
 
     QComboBox* scenarioCombo_ = nullptr;
     QLabel* descriptionLabel_ = nullptr;
@@ -62,6 +66,12 @@ private:
     QDoubleSpinBox* obstacleX0Spin_ = nullptr;
     QDoubleSpinBox* obstacleWidthSpin_ = nullptr;
     QDoubleSpinBox* obstacleHeightSpin_ = nullptr;
+    QGroupBox* imageGroup_ = nullptr;
+    QPushButton* uploadImageButton_ = nullptr;
+    QLabel* imageFileLabel_ = nullptr;
+    QDoubleSpinBox* imageThresholdSpin_ = nullptr;
+    DirectionArrowWidget* directionWidget_ = nullptr;
+    QImage customImage_;
     QSpinBox* stepsSpin_ = nullptr;
     QSpinBox* outputEverySpin_ = nullptr;
     QLineEdit* outputDirEdit_ = nullptr;

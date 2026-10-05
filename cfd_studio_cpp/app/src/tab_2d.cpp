@@ -22,10 +22,17 @@
 
 #include <string>
 
+#include "image_scenario_loader.hpp"
 #include "paraview_launcher.hpp"
+#include "solvers/image_scenario_2d.hpp"
 #include "solvers/scenario_presets_2d.hpp"
+#include "widgets/direction_arrow_widget.hpp"
 #include "widgets/plot_widget.hpp"
 #include "widgets/wrapped_label.hpp"
+
+namespace {
+constexpr const char* kCustomImageKey = "custom_image";
+}
 
 namespace {
 struct ScenarioUiInfo {
@@ -55,6 +62,7 @@ TwoDPanel::TwoDPanel(QWidget* parent) : QWidget(parent), settings_("VenturiCFD",
 void TwoDPanel::setTheme(const Theme& theme) {
     fieldPlot_->setTheme(theme);
     residualPlot_->setTheme(theme);
+    directionWidget_->setTheme(theme);
 }
 
 void TwoDPanel::shutdown() {
@@ -97,6 +105,11 @@ void TwoDPanel::buildUi() {
         QString qkey = QString::fromStdString(key);
         scenarioCombo_->addItem(scenarioUiInfo().value(qkey).label, qkey);
     }
+    // Not one of scenario_keys_2d()'s preset-driven entries -- it has no
+    // Re/U/obstacle-geometry defaults to look up, just an uploaded image
+    // and a drawn direction, both handled entirely in this tab (see
+    // onRunClicked/onUploadImage).
+    scenarioCombo_->addItem("Custom Image", QString(kCustomImageKey));
     caseForm->addRow("Scenario:", scenarioCombo_);
 
     descriptionLabel_ = new WrappedLabel(caseGroup);
@@ -143,6 +156,33 @@ void TwoDPanel::buildUi() {
     obstacleForm->addRow("Width:", obstacleWidthSpin_);
     obstacleForm->addRow("Height:", obstacleHeightSpin_);
     leftLayout->addWidget(obstacleGroup_);
+
+    imageGroup_ = new QGroupBox("Custom Image", leftPanel);
+    auto* imageLayout = new QVBoxLayout(imageGroup_);
+    uploadImageButton_ = new QPushButton("Upload Image...", imageGroup_);
+    imageLayout->addWidget(uploadImageButton_);
+    imageFileLabel_ = new WrappedLabel(imageGroup_);
+    imageFileLabel_->setObjectName("description");
+    imageFileLabel_->setText("No image chosen.");
+    imageLayout->addWidget(imageFileLabel_);
+    directionWidget_ = new DirectionArrowWidget(imageGroup_);
+    imageLayout->addWidget(directionWidget_);
+    auto* thresholdRow = new QWidget(imageGroup_);
+    auto* thresholdLayout = new QHBoxLayout(thresholdRow);
+    thresholdLayout->setContentsMargins(0, 0, 0, 0);
+    thresholdLayout->addWidget(new QLabel("Solid threshold:", thresholdRow));
+    imageThresholdSpin_ = new QDoubleSpinBox(thresholdRow);
+    imageThresholdSpin_->setRange(0.02, 0.98);
+    imageThresholdSpin_->setSingleStep(0.05);
+    imageThresholdSpin_->setDecimals(2);
+    imageThresholdSpin_->setValue(0.5);
+    thresholdLayout->addWidget(imageThresholdSpin_);
+    imageLayout->addWidget(thresholdRow);
+    leftLayout->addWidget(imageGroup_);
+    connect(uploadImageButton_, &QPushButton::clicked, this, &TwoDPanel::onUploadImage);
+    connect(imageThresholdSpin_, &QDoubleSpinBox::valueChanged, this, &TwoDPanel::updateImagePreviewMask);
+    connect(nxSpin_, &QSpinBox::valueChanged, this, &TwoDPanel::updateImagePreviewMask);
+    connect(nySpin_, &QSpinBox::valueChanged, this, &TwoDPanel::updateImagePreviewMask);
 
     auto* runGroup = new QGroupBox("Run", leftPanel);
     auto* runForm = new QFormLayout(runGroup);
@@ -214,21 +254,73 @@ void TwoDPanel::buildUi() {
 
 void TwoDPanel::onScenarioChanged() {
     QString key = scenarioCombo_->currentData().toString();
-    std::string keyStd = key.toStdString();
-    const auto& preset = cfd::solvers::scenario_preset_2d(keyStd);
-    descriptionLabel_->setText(scenarioUiInfo().value(key).description);
-    nxSpin_->setValue(preset.default_nx);
-    nySpin_->setValue(preset.default_ny);
-    reSpin_->setValue(preset.default_Re);
-    uSpin_->setValue(preset.default_U);
-    obstacleGroup_->setVisible(preset.has_obstacle);
-    if (preset.has_obstacle) {
-        auto obstacle = cfd::solvers::default_obstacle_2d(preset);
-        obstacleX0Spin_->setValue(obstacle.x0);
-        obstacleWidthSpin_->setValue(obstacle.width);
-        obstacleHeightSpin_->setValue(obstacle.height);
+    bool isCustomImage = key == QString(kCustomImageKey);
+    obstacleGroup_->setVisible(false);
+    imageGroup_->setVisible(isCustomImage);
+
+    if (isCustomImage) {
+        // Not preset-driven (see the combo-box setup in buildUi) -- no
+        // scenario_preset_2d() lookup here, it only knows the 3 built-in
+        // keys and would throw for this one.
+        descriptionLabel_->setText(
+            "Upload a PNG/JPG/WEBP image: dark, opaque pixels become a solid obstacle, everything else is "
+            "fluid. Click-drag on the preview below to set which way the flow enters.");
+        nxSpin_->setValue(121);
+        nySpin_->setValue(81);
+        reSpin_->setValue(150.0);
+        uSpin_->setValue(1.0);
+    } else {
+        std::string keyStd = key.toStdString();
+        const auto& preset = cfd::solvers::scenario_preset_2d(keyStd);
+        descriptionLabel_->setText(scenarioUiInfo().value(key).description);
+        nxSpin_->setValue(preset.default_nx);
+        nySpin_->setValue(preset.default_ny);
+        reSpin_->setValue(preset.default_Re);
+        uSpin_->setValue(preset.default_U);
+        obstacleGroup_->setVisible(preset.has_obstacle);
+        if (preset.has_obstacle) {
+            auto obstacle = cfd::solvers::default_obstacle_2d(preset);
+            obstacleX0Spin_->setValue(obstacle.x0);
+            obstacleWidthSpin_->setValue(obstacle.width);
+            obstacleHeightSpin_->setValue(obstacle.height);
+        }
     }
     suggestOutputDir();
+}
+
+void TwoDPanel::onUploadImage() {
+    QString path = QFileDialog::getOpenFileName(this, "Choose an Image", QString(),
+                                                  "Images (*.png *.jpg *.jpeg *.webp)");
+    if (path.isEmpty()) return;
+
+    auto image = image_scenario::loadImage(path);
+    if (!image) {
+        QMessageBox::warning(this, "Couldn't Load Image",
+                              QString("Couldn't read %1 as an image.").arg(QFileInfo(path).fileName()));
+        return;
+    }
+    customImage_ = *image;
+    imageFileLabel_->setText(QFileInfo(path).fileName());
+    updateImagePreviewMask();
+}
+
+void TwoDPanel::updateImagePreviewMask() {
+    if (customImage_.isNull()) return;
+    int nx = nxSpin_->value(), ny = nySpin_->value();
+    auto mask = image_scenario::rasterizeToMask(customImage_, nx, ny, imageThresholdSpin_->value());
+
+    // Shown in the arrow widget instead of the raw upload so the user sees
+    // exactly what will become solid vs. fluid at the current threshold
+    // and grid resolution, before spending a run on it.
+    QImage preview(nx, ny, QImage::Format_RGB32);
+    for (int j = 0; j < ny; ++j) {
+        int row = ny - 1 - j; // undo rasterizeToMask's bottom-origin flip for on-screen display
+        for (int i = 0; i < nx; ++i) {
+            bool solid = mask[static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i)] != 0;
+            preview.setPixelColor(i, row, solid ? QColor(0x1a, 0x22, 0x33) : QColor(0xe8, 0xec, 0xf4));
+        }
+    }
+    directionWidget_->setImage(preview);
 }
 
 void TwoDPanel::suggestOutputDir() {
@@ -252,6 +344,9 @@ void TwoDPanel::setControlsEnabled(bool running) {
     obstacleX0Spin_->setEnabled(!running);
     obstacleWidthSpin_->setEnabled(!running);
     obstacleHeightSpin_->setEnabled(!running);
+    uploadImageButton_->setEnabled(!running);
+    imageThresholdSpin_->setEnabled(!running);
+    directionWidget_->setEnabled(!running);
     stepsSpin_->setEnabled(!running);
     outputEverySpin_->setEnabled(!running);
     outputDirEdit_->setEnabled(!running);
@@ -268,18 +363,34 @@ void TwoDPanel::onRunClicked() {
 
     QString key = scenarioCombo_->currentData().toString();
     std::string keyStd = key.toStdString();
-    const auto& preset = cfd::solvers::scenario_preset_2d(keyStd);
+    bool isCustomImage = key == QString(kCustomImageKey);
 
     cfd::pipeline::Run2DOptions opts;
-    opts.scenario = key.toStdString();
-    opts.nx = nxSpin_->value();
-    opts.ny = nySpin_->value();
+    opts.scenario = keyStd;
     opts.Re = reSpin_->value();
     opts.U = uSpin_->value();
-    if (preset.has_obstacle) {
-        opts.obstacle_x0 = obstacleX0Spin_->value();
-        opts.obstacle_width = obstacleWidthSpin_->value();
-        opts.obstacle_height = obstacleHeightSpin_->value();
+
+    if (isCustomImage) {
+        if (customImage_.isNull()) {
+            statusLabel_->setText("Please upload an image first.");
+            return;
+        }
+        int nx = nxSpin_->value(), ny = nySpin_->value();
+        auto displayMask = image_scenario::rasterizeToMask(customImage_, nx, ny, imageThresholdSpin_->value());
+        auto oriented = cfd::solvers::orient_mask_for_solver(displayMask, nx, ny, directionWidget_->direction());
+        opts.custom_mask = oriented.mask;
+        opts.custom_mask_nx = oriented.nx;
+        opts.custom_mask_ny = oriented.ny;
+        opts.image_direction = directionWidget_->direction();
+    } else {
+        const auto& preset = cfd::solvers::scenario_preset_2d(keyStd);
+        opts.nx = nxSpin_->value();
+        opts.ny = nySpin_->value();
+        if (preset.has_obstacle) {
+            opts.obstacle_x0 = obstacleX0Spin_->value();
+            opts.obstacle_width = obstacleWidthSpin_->value();
+            opts.obstacle_height = obstacleHeightSpin_->value();
+        }
     }
     opts.n_steps = stepsSpin_->value();
     opts.output_every = outputEverySpin_->value();

@@ -16,7 +16,7 @@ struct Obstacle2D {
     [[nodiscard]] double x1() const { return x0 + width; }
 };
 
-enum class ScenarioKind2D { Cavity, Channel, ObstacleScenario };
+enum class ScenarioKind2D { Cavity, Channel, ObstacleScenario, ImageObstacle };
 
 // Port of solver/navier_stokes.py's SolverConfig.
 struct SolverConfig2D {
@@ -24,8 +24,16 @@ struct SolverConfig2D {
     double Lx = 1.0, Ly = 1.0;
     double Re = 100.0;
     ScenarioKind2D kind = ScenarioKind2D::Cavity;
-    double U = 1.0; // lid speed (cavity) or inflow speed (channel/obstacle)
+    double U = 1.0; // lid speed (cavity) or inflow speed (channel/obstacle/image)
     std::optional<Obstacle2D> obstacle;
+    // Only used when kind == ImageObstacle: an arbitrary solid mask, row-
+    // major (ny,nx) via core::idx2 (same layout as Fields2D), 1 = solid.
+    // Must be exactly nx*ny elements. Takes the place of the rectangular
+    // `obstacle` above -- the channel-flow boundary treatment (inflow at
+    // the left column, outflow at the right, no-slip top/bottom) is
+    // otherwise identical to ObstacleScenario, just with an arbitrary
+    // shape instead of a rectangle.
+    std::optional<std::vector<std::uint8_t>> custom_solid_mask;
     std::optional<double> dt; // nullopt => auto-computed stable dt
     double safety_factor = 0.5;
 };
